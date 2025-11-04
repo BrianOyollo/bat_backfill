@@ -3,16 +3,14 @@ name: Bring a Trailer Past Auctions
 on:
     schedule:
         - cron: '*/10 * * * *'
-    
     workflow_dispatch:
-
 
 jobs:
     fetch_auctions:
         runs-on: ubuntu-latest
         steps:
             - name: checkout repo
-              uses: actions/
+              uses: actions/checkout@v5
             
             - name: Set up Python
               uses: actions/setup-python@v5
