@@ -1,8 +1,8 @@
-name: Bring a Trailer Past Auctions
+name: Fetch BaT Past Auctions
 
 on:
     schedule:
-        - cron: '*/10 * * * *'
+        - cron: '*/15 * * * *'
     workflow_dispatch:
 
 jobs:

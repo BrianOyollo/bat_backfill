@@ -7,6 +7,7 @@ import io
 import boto3
 from io import StringIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import botocore
 
 S3_BUCKET = os.getenv("S3_BUCKET")
 NTFY_TOPIC = os.getenv("NTFY_TOPIC")
@@ -67,7 +68,7 @@ def fetch_auctions(page: int) -> dict|int:
             item['fetched_at'] = datetime.now().isoformat()
             
         return {
-            "data": data,
+            "data": auctions_data,
             'snapshot_data': snapshot_data
         }
     except Exception as e:
@@ -97,7 +98,7 @@ def save_snapshot_to_s3(s3_client, snapshot_data: dict, header: bool = False):
     try:
         if not header:
             try:
-                obj = s3_client.get_object(Bucket=S3_BUCKET, Key='auctions_snapshot.csv')
+                obj = s3_client.get_object(Bucket=S3_BUCKET, Key='auctions_snapshotl.csv')
                 existing_csv = obj['Body'].read().decode('utf-8')
                 csv_buffer = StringIO(existing_csv + csv_buffer.getvalue())
             except s3_client.exceptions.NoSuchKey:
@@ -106,7 +107,7 @@ def save_snapshot_to_s3(s3_client, snapshot_data: dict, header: bool = False):
         # Upload to S3
         s3_client.put_object(
             Bucket=S3_BUCKET,
-            Key='auctions_snapshot.csv',
+            Key='auctions_snapshotl.csv',
             Body=csv_buffer.getvalue()
         )
         print("Snapshot saved to S3 successfully.")
@@ -121,7 +122,7 @@ def read_last_saved_snapshot_from_s3(s3_client) -> dict | None:
     Returns None if the file doesn't exist.
     """
     try:
-        obj = s3_client.get_object(Bucket=S3_BUCKET, Key='auctions_snapshot.csv')
+        obj = s3_client.get_object(Bucket=S3_BUCKET, Key='auctions_snapshotl.csv')
         csv_data = obj['Body'].read().decode('utf-8')
         df = pd.read_csv(StringIO(csv_data))
         df = df.sort_values('snapshot_time')
@@ -142,7 +143,7 @@ def backfill(s3_client):
 
     print(">>> Fetching current auction stats...")
     current_snapshot = fetch_auctions(1)
-    time.sleep(100)
+    time.sleep(60)
 
     if not isinstance(current_snapshot, dict):
         return
@@ -150,7 +151,9 @@ def backfill(s3_client):
     current_snapshot = current_snapshot['snapshot_data']
     total_pages = current_snapshot['pages_total']
 
-    if os.path.exists('snapshot.csv'):
+    try:
+        s3_client.head_object(Bucket=S3_BUCKET, Key='auctions_snapshotl.csv')
+
         print(">>> Fetching most recently saved auction stats...")
         last_saved_snapshot = read_last_saved_snapshot_from_s3(s3_client)
         most_recent_snapshot = last_saved_snapshot
@@ -162,10 +165,15 @@ def backfill(s3_client):
         else:
             delta_pages = new_auctions // 60
             start_page = last_saved_snapshot['last_read_page']+delta_pages+1
-    else:
-        print(">>> Using current stats as the first snapshot...")
-        start_page = current_snapshot['last_read_page']
-        most_recent_snapshot = current_snapshot
+
+    except botocore.exceptions.ClientError as e:
+        error_code = int(e.response['Error']['Code'])
+        if error_code == 404:
+            print(">>> Snapshot not found. Using current stats as the first snapshot...")
+            start_page = current_snapshot['last_read_page']
+            most_recent_snapshot = current_snapshot
+        else:
+            raise
 
 
     batch = []
@@ -178,7 +186,7 @@ def backfill(s3_client):
         for future in as_completed(futures):
             result = future.result()
 
-            batch.append(result['data'])
+            batch.extend(result['data'])
 
             if result['snapshot_data']['last_read_page'] > most_recent_snapshot['last_read_page']:
                 most_recent_snapshot = result['snapshot_data']

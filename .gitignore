@@ -11,3 +11,4 @@ wheels/
 .env
 .envrc
 /src/bat.ipynb
+/src/*.parquet
