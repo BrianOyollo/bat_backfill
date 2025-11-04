@@ -84,7 +84,55 @@ def read_last_saved_snapshot():
     latest = df.iloc[-1].to_dict() 
     return latest
 
+def save_snapshot_to_s3(s3_client, snapshot_data: dict, header: bool = False):
+    """
+    Appends a snapshot to the CSV file in S3.
+    """
+    df = pd.DataFrame([snapshot_data])
 
+    csv_buffer = StringIO()
+    df.to_csv(csv_buffer, index=False, header=header)
+    csv_buffer.seek(0)
+
+    try:
+        if not header:
+            try:
+                obj = s3_client.get_object(Bucket=S3_BUCKET, Key='auctions_snapshot.csv')
+                existing_csv = obj['Body'].read().decode('utf-8')
+                csv_buffer = StringIO(existing_csv + csv_buffer.getvalue())
+            except s3_client.exceptions.NoSuchKey:
+                pass
+
+        # Upload to S3
+        s3_client.put_object(
+            Bucket=S3_BUCKET,
+            Key='auctions_snapshot.csv',
+            Body=csv_buffer.getvalue()
+        )
+        print("Snapshot saved to S3 successfully.")
+
+    except Exception as e:
+        print(f"Error saving snapshot to S3: {e}")
+        raise
+
+def read_last_saved_snapshot_from_s3(s3_client) -> dict | None:
+    """
+    Reads the latest snapshot from S3 and returns it as a dictionary.
+    Returns None if the file doesn't exist.
+    """
+    try:
+        obj = s3_client.get_object(Bucket=S3_BUCKET, Key='auctions_snapshot.csv')
+        csv_data = obj['Body'].read().decode('utf-8')
+        df = pd.read_csv(StringIO(csv_data))
+        df = df.sort_values('snapshot_time')
+        latest = df.iloc[-1].to_dict()
+        return latest
+    except s3_client.exceptions.NoSuchKey:
+        print("No snapshot found in S3. Starting fresh.")
+        return None
+    except Exception as e:
+        print(f"Error reading snapshot from S3: {e}")
+        raise
 
 def backfill(s3_client):
 
@@ -104,7 +152,7 @@ def backfill(s3_client):
 
     if os.path.exists('snapshot.csv'):
         print(">>> Fetching most recently saved auction stats...")
-        last_saved_snapshot = read_last_saved_snapshot()
+        last_saved_snapshot = read_last_saved_snapshot_from_s3(s3_client)
         most_recent_snapshot = last_saved_snapshot
     
         new_auctions = current_snapshot['items_total'] - last_saved_snapshot['items_total']
@@ -138,9 +186,9 @@ def backfill(s3_client):
     # save snapshot
     print(">>> Updating snapshot file...")
     if os.path.exists('snapshot.csv'):
-        save_snapshot(result['snapshot_data'], header=False)
+        save_snapshot_to_s3(s3_client, most_recent_snapshot, header=False)
     else:
-        save_snapshot(result['snapshot_data'], header=True)
+        save_snapshot_to_s3(s3_client, most_recent_snapshot, header=True)
 
 
     # upload file to s3
@@ -148,8 +196,6 @@ def backfill(s3_client):
     upload_to_s3(s3_client, batch)
 
     
-
-
 if __name__ == '__main__':
     s3_client = boto3.client(
         's3',
