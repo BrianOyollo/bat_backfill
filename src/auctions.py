@@ -98,7 +98,7 @@ def save_snapshot_to_s3(s3_client, snapshot_data: dict, header: bool = False):
     try:
         if not header:
             try:
-                obj = s3_client.get_object(Bucket=S3_BUCKET, Key='auctions_snapshotl.csv')
+                obj = s3_client.get_object(Bucket=S3_BUCKET, Key='auctions_snapshot.csv')
                 existing_csv = obj['Body'].read().decode('utf-8')
                 csv_buffer = StringIO(existing_csv + csv_buffer.getvalue())
             except s3_client.exceptions.NoSuchKey:
@@ -107,7 +107,7 @@ def save_snapshot_to_s3(s3_client, snapshot_data: dict, header: bool = False):
         # Upload to S3
         s3_client.put_object(
             Bucket=S3_BUCKET,
-            Key='auctions_snapshotl.csv',
+            Key='auctions_snapshot.csv',
             Body=csv_buffer.getvalue()
         )
         print("Snapshot saved to S3 successfully.")
@@ -122,7 +122,7 @@ def read_last_saved_snapshot_from_s3(s3_client) -> dict | None:
     Returns None if the file doesn't exist.
     """
     try:
-        obj = s3_client.get_object(Bucket=S3_BUCKET, Key='auctions_snapshotl.csv')
+        obj = s3_client.get_object(Bucket=S3_BUCKET, Key='auctions_snapshot.csv')
         csv_data = obj['Body'].read().decode('utf-8')
         df = pd.read_csv(StringIO(csv_data))
         df = df.sort_values('snapshot_time')
@@ -152,7 +152,7 @@ def backfill(s3_client):
     total_pages = current_snapshot['pages_total']
 
     try:
-        s3_client.head_object(Bucket=S3_BUCKET, Key='auctions_snapshotl.csv')
+        s3_client.head_object(Bucket=S3_BUCKET, Key='auctions_snapshot.csv')
 
         print(">>> Fetching most recently saved auction stats...")
         last_saved_snapshot = read_last_saved_snapshot_from_s3(s3_client)
